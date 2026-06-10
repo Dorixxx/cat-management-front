@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 
-const BACKEND_BASE = "http://aleiiicat-managementlatest.zeabur.internal";
+const BACKEND_BASE = "http://aleiiicat-managementlatest.zeabur.internal:8000";
 
 async function startServer() {
   const app = express();
