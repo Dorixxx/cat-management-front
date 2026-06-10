@@ -3,29 +3,15 @@ export interface ApiConfig {
   apiBaseUrl: string; // e.g., "http://localhost:8000"
 }
 
-const STORAGE_KEY = 'felinescape_v2_api_config';
-
 export const getApiConfig = (): ApiConfig => {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      return {
-        enableApiMode: !!parsed.enableApiMode,
-        apiBaseUrl: parsed.apiBaseUrl || 'http://localhost:8000',
-      };
-    } catch (e) {
-      // fallback
-    }
-  }
   return {
-    enableApiMode: false,
-    apiBaseUrl: 'http://localhost:8000',
+    enableApiMode: true,
+    apiBaseUrl: 'http://aleiiicat-managementlatest.zeabur.internal',
   };
 };
 
 export const saveApiConfig = (config: ApiConfig): void => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  // Permanently set to Zeabur internal, no-op for custom saves
 };
 
 // Internal API path helper

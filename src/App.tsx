@@ -12,7 +12,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { Plus, Package, CalendarClock, Cat as CatIcon, RefreshCw, Sparkles, HelpCircle, Home, Settings, WifiOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getBarkConfig, sendBarkNotification } from './utils/bark';
-import { apiClient, getApiConfig } from './utils/apiClient';
+import { apiClient } from './utils/apiClient';
 
 // Help date calculator
 const addDaysStr = (dateStr: string, days: number): string => {
@@ -75,6 +75,67 @@ export default function App() {
   // -----------------------------------------
   const [activeTab, setActiveTab] = useState<'overview' | 'cats' | 'supplies' | 'tasks' | 'settings'>('overview');
 
+  // -----------------------------------------
+  // BACKEND API SYNC ENGINE
+  // -----------------------------------------
+  const [isApiLoading, setIsApiLoading] = useState(false);
+  const [apiErrorMsg, setApiErrorMsg] = useState<string | null>(null);
+
+  // Sync data with backend API on mount
+  useEffect(() => {
+    let active = true;
+    const fetchAllData = async () => {
+      setIsApiLoading(true);
+      setApiErrorMsg(null);
+      try {
+        console.log('🔄 Syncing with backend at http://aleiiicat-managementlatest.zeabur.internal ...');
+        const [backendCats, backendSupplies, backendTasks] = await Promise.all([
+          apiClient.listCats(),
+          apiClient.listInventory(),
+          apiClient.listTasks()
+        ]);
+        
+        if (!active) return;
+
+        if (backendCats) setCats(backendCats);
+        if (backendSupplies) setSupplies(backendSupplies);
+        if (backendTasks) setTasks(backendTasks);
+
+        // Fetch weight records for loaded cats
+        const allWeights: WeightRecord[] = [];
+        if (backendCats && backendCats.length > 0) {
+          for (const cat of backendCats) {
+            try {
+              const weights = await apiClient.listWeights(cat.id);
+              if (weights && weights.length > 0) {
+                allWeights.push(...weights);
+              }
+            } catch (e) {
+              // silent fail for this cat's weights
+            }
+          }
+        }
+        
+        if (!active) return;
+        if (allWeights.length > 0) {
+          setWeightRecords(allWeights);
+        }
+        console.log('✅ Synchronized with Zeabur backend API!');
+      } catch (err: any) {
+        if (!active) return;
+        console.warn('⚠️ Zeabur backend connection failed:', err);
+        setApiErrorMsg('无法连接后端服务 (物理地址: aleiiicat-managementlatest.zeabur.internal). 已启用本地缓存离线工作，系统在册状态正常。');
+      } finally {
+        if (active) setIsApiLoading(false);
+      }
+    };
+
+    fetchAllData();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Automated Overdue health task checker
   useEffect(() => {
     const config = getBarkConfig();
@@ -112,7 +173,7 @@ export default function App() {
   // CORE DB INITIALIZER (RESEED HANDLER)
   // -----------------------------------------
   const handleResetData = () => {
-    if (confirm('确认重置：这一步将清空您目前注册的所有新猫咪、修改过的用品库存以及完成时间，回滚到出厂系统示例配置。确定要回滚吗？')) {
+    if (confirm('确认重置：这一步将清空您目前注册的所有新猫咪、修改过的用品库存以及完成时间，回滚到初厂空配置。确定要清空吗？')) {
       localStorage.removeItem('felinescape_v2_cats');
       localStorage.removeItem('felinescape_v2_supplies');
       localStorage.removeItem('felinescape_v2_tasks');
@@ -139,17 +200,31 @@ export default function App() {
   // -----------------------------------------
   // CRUD BUSINESS HANDLERS: CAT PROFILES
   // -----------------------------------------
-  const handleSaveCatProfile = (catData: Omit<Cat, 'id' | 'createdAt'>) => {
+  const handleSaveCatProfile = async (catData: Omit<Cat, 'id' | 'createdAt'>) => {
     if (isEditCatOpen && selectedCatId) {
-      // Modify existing cat
+      // API call to update
+      try {
+        await apiClient.updateCat(selectedCatId, catData);
+      } catch (e) {
+        console.error("API updateCat failed:", e);
+      }
+
+      // Modify existing cat locally
       setCats(prev => prev.map(c => c.id === selectedCatId ? { ...c, ...catData } : c));
       
       // Also write down a weight record matching this date if we changed its current weight index
       const todayString = new Date().toISOString().split('T')[0];
       const hasRecordToday = weightRecords.some(w => w.catId === selectedCatId && w.date === todayString);
       if (!hasRecordToday) {
+        let weightRecordId = `w-${Date.now()}`;
+        try {
+          const backendWeightId = await apiClient.createWeight(selectedCatId, catData.weight, todayString);
+          if (backendWeightId) weightRecordId = backendWeightId;
+        } catch (e) {
+          console.error("API createWeight on cat update failed:", e);
+        }
         setWeightRecords(prev => [...prev, {
-          id: `w-${Date.now()}`,
+          id: weightRecordId,
           catId: selectedCatId,
           date: todayString,
           weight: catData.weight
@@ -158,7 +233,14 @@ export default function App() {
       setIsEditCatOpen(false);
     } else {
       // Create new cat
-      const newId = `cat-${Date.now()}`;
+      let newId = `cat-${Date.now()}`;
+      try {
+        const backendId = await apiClient.createCat(catData);
+        if (backendId) newId = backendId;
+      } catch (e) {
+        console.error("API createCat failed:", e);
+      }
+
       const newCat: Cat = {
         id: newId,
         ...catData,
@@ -167,8 +249,16 @@ export default function App() {
       setCats(prev => [newCat, ...prev]);
 
       // Create initial weight capture
+      let initWeightId = `w-${Date.now()}-init`;
+      try {
+        const backendWeightId = await apiClient.createWeight(newId, catData.weight, new Date().toISOString().split('T')[0]);
+        if (backendWeightId) initWeightId = backendWeightId;
+      } catch (e) {
+        console.error("API createWeight initial failed:", e);
+      }
+
       setWeightRecords(prev => [...prev, {
-        id: `w-${Date.now()}-init`,
+        id: initWeightId,
         catId: newId,
         date: new Date().toISOString().split('T')[0],
         weight: catData.weight
@@ -178,7 +268,13 @@ export default function App() {
     }
   };
 
-  const handleDeleteCatProfile = (catId: string) => {
+  const handleDeleteCatProfile = async (catId: string) => {
+    try {
+      await apiClient.deleteCat(catId);
+    } catch (e) {
+      console.error("API deleteCat failed:", e);
+    }
+
     setCats(prev => prev.filter(c => c.id !== catId));
     // clean bound data
     setWeightRecords(prev => prev.filter(w => w.catId !== catId));
@@ -190,16 +286,30 @@ export default function App() {
   // -----------------------------------------
   // CRUD BUSINESS HANDLERS: SUPPLIES INVENTORY
   // -----------------------------------------
-  const handleAddSupply = (itemData: Omit<SupplyItem, 'id' | 'lastUpdated'>) => {
+  const handleAddSupply = async (itemData: Omit<SupplyItem, 'id' | 'lastUpdated'>) => {
+    let newItemId = `item-${Date.now()}`;
+    try {
+      const backendId = await apiClient.createInventoryItem(itemData);
+      if (backendId) newItemId = backendId;
+    } catch (e) {
+      console.error("API createInventoryItem failed:", e);
+    }
+
     const newItem: SupplyItem = {
-      id: `item-${Date.now()}`,
+      id: newItemId,
       ...itemData,
       lastUpdated: new Date().toISOString(),
     };
     setSupplies(prev => [newItem, ...prev]);
   };
 
-  const handleUpdateSupply = (updatedItem: SupplyItem) => {
+  const handleUpdateSupply = async (updatedItem: SupplyItem) => {
+    try {
+      await apiClient.updateInventoryItem(updatedItem.id, updatedItem);
+    } catch (e) {
+      console.error("API updateInventoryItem failed:", e);
+    }
+
     setSupplies(prev => {
       const existing = prev.find(s => s.id === updatedItem.id);
       if (existing) {
@@ -221,34 +331,63 @@ export default function App() {
     });
   };
 
-  const handleDeleteSupply = (id: string) => {
+  const handleDeleteSupply = async (id: string) => {
+    try {
+      await apiClient.deleteInventoryItem(id);
+    } catch (e) {
+      console.error("API deleteInventoryItem failed:", e);
+    }
     setSupplies(prev => prev.filter(s => s.id !== id));
   };
 
   // -----------------------------------------
   // CRUD BUSINESS HANDLERS: ROUTINE TASKS
   // -----------------------------------------
-  const handleAddTask = (taskData: Omit<RoutineTask, 'id' | 'lastCompletedDate'>) => {
+  const handleAddTask = async (taskData: Omit<RoutineTask, 'id' | 'lastCompletedDate'>) => {
+    let newTaskId = `task-${Date.now()}`;
+    try {
+      const backendId = await apiClient.createTask(taskData);
+      if (backendId) newTaskId = backendId;
+    } catch (e) {
+      console.error("API createTask failed:", e);
+    }
+
     const newTask: RoutineTask = {
-      id: `task-${Date.now()}`,
+      id: newTaskId,
       lastCompletedDate: null,
       ...taskData,
     };
     setTasks(prev => [newTask, ...prev]);
   };
 
-  const handleUpdateTask = (updatedTask: RoutineTask) => {
+  const handleUpdateTask = async (updatedTask: RoutineTask) => {
+    try {
+      await apiClient.updateTask(updatedTask.id, updatedTask);
+    } catch (e) {
+      console.error("API updateTask failed:", e);
+    }
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
   };
 
-  const handleDeleteTask = (id: string) => {
+  const handleDeleteTask = async (id: string) => {
+    try {
+      await apiClient.deleteTask(id);
+    } catch (e) {
+      console.error("API deleteTask failed:", e);
+    }
     setTasks(prev => prev.filter(t => t.id !== id));
   };
 
   // Automated Routine Completion Engine
-  const handleCompleteTaskCycle = (task: RoutineTask) => {
+  const handleCompleteTaskCycle = async (task: RoutineTask) => {
     const today = new Date().toISOString().split('T')[0];
     const calculatedNext = addDaysStr(today, task.intervalDays);
+
+    try {
+      await apiClient.completeTask(task.id);
+    } catch (e) {
+      console.error("API completeTask failed:", e);
+    }
 
     const updated: RoutineTask = {
       ...task,
@@ -263,9 +402,17 @@ export default function App() {
   };
 
   // Handle adding weight from inside Details Dossier
-  const handleAddWeightRecord = (catId: string, weightVal: number, dateStr: string) => {
+  const handleAddWeightRecord = async (catId: string, weightVal: number, dateStr: string) => {
+    let recordId = `w-${Date.now()}`;
+    try {
+      const backendId = await apiClient.createWeight(catId, weightVal, dateStr);
+      if (backendId) recordId = backendId;
+    } catch (e) {
+      console.error("API createWeight failed:", e);
+    }
+
     const newRecord: WeightRecord = {
-      id: `w-${Date.now()}`,
+      id: recordId,
       catId,
       date: dateStr,
       weight: weightVal

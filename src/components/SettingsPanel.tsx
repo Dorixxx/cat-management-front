@@ -1,74 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { getBarkConfig, saveBarkConfig, sendBarkNotification, BarkConfig } from '../utils/bark';
-import { getApiConfig, saveApiConfig, ApiConfig } from '../utils/apiClient';
-import { Bell, ShieldCheck, Key, RefreshCw, Send, CheckCircle2, HelpCircle, AlertCircle, Server, ToggleLeft, ToggleRight, Wifi } from 'lucide-react';
+import { Bell, Key, Send, CheckCircle2, AlertCircle, HelpCircle } from 'lucide-react';
 
 interface SettingsPanelProps {
   onNotifySave?: () => void;
   onApiConfigChange?: () => void;
 }
 
-export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onNotifySave, onApiConfigChange }) => {
+export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onNotifySave }) => {
   const [config, setConfig] = useState<BarkConfig>(getBarkConfig());
-  const [apiConfig, setApiConfig] = useState<ApiConfig>(getApiConfig());
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [showSaveAlert, setShowSaveAlert] = useState(false);
-  
-  const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [isTestingApi, setIsTestingApi] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     saveBarkConfig(config);
-    saveApiConfig(apiConfig);
     setShowSaveAlert(true);
     setTimeout(() => setShowSaveAlert(false), 3000);
     if (onNotifySave) onNotifySave();
-    if (onApiConfigChange) onApiConfigChange();
-  };
-
-  const handleTestApiConnection = async () => {
-    setIsTestingApi(true);
-    setApiTestResult(null);
-    let base = apiConfig.apiBaseUrl.trim();
-    if (base.endsWith('/')) {
-      base = base.slice(0, -1);
-    }
-    const healthUrl = `${base}/api/health`;
-
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 4000); // 4 seconds timeout
-
-      const res = await fetch(healthUrl, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: { 'Accept': 'application/json' }
-      });
-      clearTimeout(id);
-
-      if (res.ok) {
-        const data = await res.json();
-        setApiTestResult({
-          success: true,
-          message: `连接成功！后端状态: ${data.status || '正常'}. 说明: ${data.message || '运行中'}`
-        });
-      } else {
-        setApiTestResult({
-          success: false,
-          message: `连接失败: HTTP ${res.status} ${res.statusText}. 请确认您的后端已经正确启动且允许跨域(CORS)。`
-        });
-      }
-    } catch (err: any) {
-      console.error(err);
-      setApiTestResult({
-        success: false,
-        message: `无法连接到 ${healthUrl}. 失败原因: ${err.message || '网络不通 / 被拒绝联络'}. 提示: 请保证您的 FastAPI 服务正在本地运行且启动了 CORS 中间件。`
-      });
-    } finally {
-      setIsTestingApi(false);
-    }
   };
 
   const handleTestPush = async () => {
@@ -95,92 +45,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onNotifySave, onAp
   return (
     <div className="space-y-6 max-w-3xl mx-auto" id="settings-panel-section">
       
-      {/* 2. API CONNECTION CONFIGURATION (New addition for Dorixxx/cat-management interface) */}
-      <div className="bg-white rounded-2xl border border-stone-100 p-6 shadow-[0_1.5px_3px_rgba(0,0,0,0.01)]">
-        <div className="border-b border-stone-100 pb-4 mb-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-stone-850 font-extrabold text-sm flex items-center gap-2">
-              <Server className="text-amber-600 stroke-[2.5]" size={16} />
-              <span>FastAPI 后端接口对接设置</span>
-            </h2>
-            <button
-              type="button"
-              onClick={() => {
-                const updated = { ...apiConfig, enableApiMode: !apiConfig.enableApiMode };
-                setApiConfig(updated);
-                saveApiConfig(updated);
-                if (onApiConfigChange) onApiConfigChange();
-              }}
-              className="flex items-center gap-1 text-[11px] font-bold cursor-pointer transition select-none"
-            >
-              {apiConfig.enableApiMode ? (
-                <span className="text-emerald-600 flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded">
-                  🟢 外部接口模式已开启
-                </span>
-              ) : (
-                <span className="text-stone-400 flex items-center gap-1 bg-stone-50 px-2 py-1 rounded">
-                  ⚪ 模拟数据模式运行中
-                </span>
-              )}
-            </button>
-          </div>
-          <p className="text-[11px] text-stone-400 font-sans mt-2">
-            根据 <code>cat-management</code> (FastAPI + SQLAlchemy + PostgreSQL) 项目的运行地址，开启对接模式。开启后，本系统的猫咪档案、健康任务提醒和库存数据将与您的 FastAPI 实例联络并保持持久化。
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-              <span>FastAPI 后端服务地址 *</span>
-              <span className="text-stone-300 font-normal">例如: http://127.0.0.1:8000</span>
-            </label>
-            <div className="flex gap-2.5">
-              <input
-                type="url"
-                required
-                placeholder="e.g. http://localhost:8000"
-                value={apiConfig.apiBaseUrl}
-                onChange={(e) => setApiConfig({ ...apiConfig, apiBaseUrl: e.target.value })}
-                className="flex-1 text-xs font-semibold rounded-xl border border-stone-200 py-2.5 px-3.5 bg-stone-50/50 focus:bg-white outline-hidden focus:border-amber-400 transition"
-              />
-              <button
-                type="button"
-                disabled={isTestingApi}
-                onClick={handleTestApiConnection}
-                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <Wifi size={12} className={isTestingApi ? 'animate-bounce' : ''} />
-                <span>测试接口连接</span>
-              </button>
-            </div>
-            <span className="text-[9px] text-stone-400 font-sans mt-1.5 block">
-              请确保您的 FastAPI 后端处于运行状态（可以访问官方默认的 <code>/api/health</code> ）。建议配置后端服务启动跨域许可访问。
-            </span>
-          </div>
-
-          {apiTestResult && (
-            <div className={`p-4 rounded-xl border flex items-start gap-3 animate-fade-in ${
-              apiTestResult.success 
-                ? 'bg-emerald-50/70 border-emerald-100 text-emerald-800' 
-                : 'bg-amber-50/70 border-amber-100 text-amber-800'
-            }`}>
-              {apiTestResult.success ? (
-                <CheckCircle2 size={14} className="mt-0.5 text-emerald-600 shrink-0 stroke-[2.5]" />
-              ) : (
-                <AlertCircle size={14} className="mt-0.5 text-amber-600 shrink-0 stroke-[2.5]" />
-              )}
-              <div>
-                <h4 className="font-bold text-[11px] uppercase tracking-wide">
-                  {apiTestResult.success ? '后端连接测试成功' : '后端连通性异常'}
-                </h4>
-                <p className="text-[10px] mt-1 font-medium font-sans leading-relaxed">{apiTestResult.message}</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* 1. Bark Notifications */}
       <div className="bg-white rounded-2xl border border-stone-100 p-6 shadow-[0_1.5px_3px_rgba(0,0,0,0.01)]">
         <div className="border-b border-stone-100 pb-4 mb-6">
@@ -336,23 +200,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ onNotifySave, onAp
         )}
       </div>
 
-      {/* Step Guide Help segment */}
+      {/* Help segments */}
       <div className="bg-amber-50/30 border border-amber-100/50 rounded-xl p-4.5 text-stone-700 text-xs">
         <h4 className="font-bold text-[11px] text-amber-900 flex items-center gap-1.5 mb-1.5">
           <HelpCircle size={12} className="text-amber-600" />
-          如何体验完整的 FastAPI 后端接口对接？
+          什么是 iOS Bark 推送，我该如何使用？
         </h4>
-        <ol className="list-decimal list-inside space-y-1.5 text-[10px] text-stone-600 font-sans leading-relaxed">
-          <li>按照 <code>Dorixxx/cat-management</code> 项目的启动说明，在本地启动后端的 FastAPI 服务：
-            <code className="bg-white px-1.5 py-0.5 border border-stone-200 rounded mx-1 text-amber-800 font-mono">uvicorn app.main:app --reload</code>。
-          </li>
-          <li>将上方<b>“外部接口模式”</b>切换开启（将显示为绿色的“🟢 外部接口模式已开启”）。</li>
-          <li>填入您后端的运行服务地址（一般默认是 <code>http://localhost:8000</code> 或 <code>http://127.0.0.1:8000</code>）。</li>
-          <li>点击“测试接口连接”以确认通畅。测试成功后，返回首页或刷新页面，所有猫咪和计划都将自动与您的 PostgreSQL 数据库同步！</li>
+        <ol className="list-decimal list-inside space-y-1 text-[10px] text-stone-600 font-sans leading-relaxed">
+          <li>在苹果 App Store 搜索并安装 <code>Bark</code>（免费开源）；</li>
+          <li>进入该 App，它将自动为您注册生成唯一的 Key（如：<code>https://api.day.app/<b>xxxxxxxxxxx</b></code>）；</li>
+          <li>将该串 Key 复制并填入上方输入框中，点击 <strong>“保存所有配置”</strong> 即可启用连接；</li>
+          <li>本应用在后台支持随时接收该推送。</li>
         </ol>
       </div>
 
     </div>
   );
 };
-
