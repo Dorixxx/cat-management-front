@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Cat, SupplyItem, RoutineTask, WeightRecord } from './types';
 import { INITIAL_CATS, INITIAL_SUPPLIES, INITIAL_TASKS } from './data';
 import { StatsOverview } from './components/StatsOverview';
@@ -25,50 +25,10 @@ export default function App() {
   // -----------------------------------------
   // CORE PERSISTED STATE
   // -----------------------------------------
-  const [cats, setCats] = useState<Cat[]>(() => {
-    const saved = localStorage.getItem('felinescape_v2_cats');
-    return saved ? JSON.parse(saved) : INITIAL_CATS;
-  });
-
-  const [supplies, setSupplies] = useState<SupplyItem[]>(() => {
-    const saved = localStorage.getItem('felinescape_v2_supplies');
-    return saved ? JSON.parse(saved) : INITIAL_SUPPLIES;
-  });
-
-  const [tasks, setTasks] = useState<RoutineTask[]>(() => {
-    const saved = localStorage.getItem('felinescape_v2_tasks');
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
-  });
-
-  const [weightRecords, setWeightRecords] = useState<WeightRecord[]>(() => {
-    const saved = localStorage.getItem('felinescape_v2_weights');
-    if (saved) return JSON.parse(saved);
-    // Otherwise seed initial weight records from existing cats
-    const initialRecords: WeightRecord[] = INITIAL_CATS.map(c => ({
-      id: `w-${c.id}-init`,
-      catId: c.id,
-      date: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      weight: c.weight
-    }));
-    return initialRecords;
-  });
-
-  // Save to storage
-  useEffect(() => {
-    localStorage.setItem('felinescape_v2_cats', JSON.stringify(cats));
-  }, [cats]);
-
-  useEffect(() => {
-    localStorage.setItem('felinescape_v2_supplies', JSON.stringify(supplies));
-  }, [supplies]);
-
-  useEffect(() => {
-    localStorage.setItem('felinescape_v2_tasks', JSON.stringify(tasks));
-  }, [tasks]);
-
-  useEffect(() => {
-    localStorage.setItem('felinescape_v2_weights', JSON.stringify(weightRecords));
-  }, [weightRecords]);
+  const [cats, setCats] = useState<Cat[]>([]);
+  const [supplies, setSupplies] = useState<SupplyItem[]>([]);
+  const [tasks, setTasks] = useState<RoutineTask[]>([]);
+  const [weightRecords, setWeightRecords] = useState<WeightRecord[]>([]);
 
   // -----------------------------------------
   // UI NAVIGATION SWITCHER STATE
@@ -81,60 +41,53 @@ export default function App() {
   const [isApiLoading, setIsApiLoading] = useState(false);
   const [apiErrorMsg, setApiErrorMsg] = useState<string | null>(null);
 
-  // Sync data with backend API on mount
-  useEffect(() => {
-    let active = true;
-    const fetchAllData = async () => {
-      setIsApiLoading(true);
-      setApiErrorMsg(null);
-      try {
-        console.log('🔄 Syncing with backend at http://aleiiicat-managementlatest.zeabur.internal ...');
-        const [backendCats, backendSupplies, backendTasks] = await Promise.all([
-          apiClient.listCats(),
-          apiClient.listInventory(),
-          apiClient.listTasks()
-        ]);
-        
-        if (!active) return;
+  // Sync data with backend API function
+  const syncAllFromBackend = useCallback(async () => {
+    setIsApiLoading(true);
+    setApiErrorMsg(null);
+    try {
+      console.log('🔄 Syncing with backend at http://aleiiicat-managementlatest.zeabur.internal ...');
+      const [backendCats, backendSupplies, backendTasks] = await Promise.all([
+        apiClient.listCats(),
+        apiClient.listInventory(),
+        apiClient.listTasks()
+      ]);
 
-        if (backendCats) setCats(backendCats);
-        if (backendSupplies) setSupplies(backendSupplies);
-        if (backendTasks) setTasks(backendTasks);
+      if (backendCats) setCats(backendCats);
+      if (backendSupplies) setSupplies(backendSupplies);
+      if (backendTasks) setTasks(backendTasks);
 
-        // Fetch weight records for loaded cats
-        const allWeights: WeightRecord[] = [];
-        if (backendCats && backendCats.length > 0) {
-          for (const cat of backendCats) {
-            try {
-              const weights = await apiClient.listWeights(cat.id);
-              if (weights && weights.length > 0) {
-                allWeights.push(...weights);
-              }
-            } catch (e) {
-              // silent fail for this cat's weights
+      // Fetch weight records for loaded cats
+      const allWeights: WeightRecord[] = [];
+      if (backendCats && backendCats.length > 0) {
+        for (const cat of backendCats) {
+          try {
+            const weights = await apiClient.listWeights(cat.id);
+            if (weights && weights.length > 0) {
+              allWeights.push(...weights);
             }
+          } catch (e) {
+            // silent fail for this cat's weights
           }
         }
-        
-        if (!active) return;
-        if (allWeights.length > 0) {
-          setWeightRecords(allWeights);
-        }
-        console.log('✅ Synchronized with Zeabur backend API!');
-      } catch (err: any) {
-        if (!active) return;
-        console.warn('⚠️ Zeabur backend connection failed:', err);
-        setApiErrorMsg('无法连接后端服务 (物理地址: aleiiicat-managementlatest.zeabur.internal). 已启用本地缓存离线工作，系统在册状态正常。');
-      } finally {
-        if (active) setIsApiLoading(false);
       }
-    };
 
-    fetchAllData();
-    return () => {
-      active = false;
-    };
+      if (allWeights.length > 0) {
+        setWeightRecords(allWeights);
+      }
+      console.log('✅ Synchronized with Zeabur backend API!');
+    } catch (err: any) {
+      console.warn('⚠️ Zeabur backend connection failed:', err);
+      setApiErrorMsg('无法连接后端服务 (物理地址: aleiiicat-managementlatest.zeabur.internal). 已启用本地缓存离线工作，系统在册状态正常。');
+    } finally {
+      setIsApiLoading(false);
+    }
   }, []);
+
+  // Sync data with backend API on mount
+  useEffect(() => {
+    syncAllFromBackend();
+  }, [syncAllFromBackend]);
 
   // Automated Overdue health task checker
   useEffect(() => {
@@ -173,23 +126,18 @@ export default function App() {
   // CORE DB INITIALIZER (RESEED HANDLER)
   // -----------------------------------------
   const handleResetData = () => {
-    if (confirm('确认重置：这一步将清空您目前注册的所有新猫咪、修改过的用品库存以及完成时间，回滚到初厂空配置。确定要清空吗？')) {
+    if (confirm('确认刷新同步：这一步将清空浏览器本地缓存并重新与后端服务器同步最新数据。确定要执行吗？')) {
       localStorage.removeItem('felinescape_v2_cats');
       localStorage.removeItem('felinescape_v2_supplies');
       localStorage.removeItem('felinescape_v2_tasks');
       localStorage.removeItem('felinescape_v2_weights');
 
-      setCats(INITIAL_CATS);
-      setSupplies(INITIAL_SUPPLIES);
-      setTasks(INITIAL_TASKS);
-      
-      const initialRecords: WeightRecord[] = INITIAL_CATS.map(c => ({
-        id: `w-${c.id}-init`,
-        catId: c.id,
-        date: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        weight: c.weight
-      }));
-      setWeightRecords(initialRecords);
+      setCats([]);
+      setSupplies([]);
+      setTasks([]);
+      setWeightRecords([]);
+      syncAllFromBackend();
+
       setSelectedCatId(null);
       setIsDetailsOpen(false);
       setIsEditCatOpen(false);
@@ -205,8 +153,11 @@ export default function App() {
       // API call to update
       try {
         await apiClient.updateCat(selectedCatId, catData);
+        await syncAllFromBackend();
+        setIsEditCatOpen(false);
+        return;
       } catch (e) {
-        console.error("API updateCat failed:", e);
+        console.error("API updateCat failed, fallback to local:", e);
       }
 
       // Modify existing cat locally
@@ -233,14 +184,19 @@ export default function App() {
       setIsEditCatOpen(false);
     } else {
       // Create new cat
-      let newId = `cat-${Date.now()}`;
       try {
-        const backendId = await apiClient.createCat(catData);
-        if (backendId) newId = backendId;
+        const newId = await apiClient.createCat(catData);
+        if (newId) {
+          await apiClient.createWeight(newId, catData.weight, new Date().toISOString().split('T')[0]);
+        }
+        await syncAllFromBackend();
+        setIsAddCatOpen(false);
+        return;
       } catch (e) {
-        console.error("API createCat failed:", e);
+        console.error("API createCat failed, falling back to local:", e);
       }
 
+      let newId = `cat-${Date.now()}`;
       const newCat: Cat = {
         id: newId,
         ...catData,
@@ -250,13 +206,6 @@ export default function App() {
 
       // Create initial weight capture
       let initWeightId = `w-${Date.now()}-init`;
-      try {
-        const backendWeightId = await apiClient.createWeight(newId, catData.weight, new Date().toISOString().split('T')[0]);
-        if (backendWeightId) initWeightId = backendWeightId;
-      } catch (e) {
-        console.error("API createWeight initial failed:", e);
-      }
-
       setWeightRecords(prev => [...prev, {
         id: initWeightId,
         catId: newId,
@@ -271,6 +220,10 @@ export default function App() {
   const handleDeleteCatProfile = async (catId: string) => {
     try {
       await apiClient.deleteCat(catId);
+      await syncAllFromBackend();
+      setIsDetailsOpen(false);
+      setSelectedCatId(null);
+      return;
     } catch (e) {
       console.error("API deleteCat failed:", e);
     }
@@ -287,14 +240,15 @@ export default function App() {
   // CRUD BUSINESS HANDLERS: SUPPLIES INVENTORY
   // -----------------------------------------
   const handleAddSupply = async (itemData: Omit<SupplyItem, 'id' | 'lastUpdated'>) => {
-    let newItemId = `item-${Date.now()}`;
     try {
-      const backendId = await apiClient.createInventoryItem(itemData);
-      if (backendId) newItemId = backendId;
+      await apiClient.createInventoryItem(itemData);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API createInventoryItem failed:", e);
     }
 
+    let newItemId = `item-${Date.now()}`;
     const newItem: SupplyItem = {
       id: newItemId,
       ...itemData,
@@ -306,6 +260,8 @@ export default function App() {
   const handleUpdateSupply = async (updatedItem: SupplyItem) => {
     try {
       await apiClient.updateInventoryItem(updatedItem.id, updatedItem);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API updateInventoryItem failed:", e);
     }
@@ -334,6 +290,8 @@ export default function App() {
   const handleDeleteSupply = async (id: string) => {
     try {
       await apiClient.deleteInventoryItem(id);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API deleteInventoryItem failed:", e);
     }
@@ -344,14 +302,15 @@ export default function App() {
   // CRUD BUSINESS HANDLERS: ROUTINE TASKS
   // -----------------------------------------
   const handleAddTask = async (taskData: Omit<RoutineTask, 'id' | 'lastCompletedDate'>) => {
-    let newTaskId = `task-${Date.now()}`;
     try {
-      const backendId = await apiClient.createTask(taskData);
-      if (backendId) newTaskId = backendId;
+      await apiClient.createTask(taskData);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API createTask failed:", e);
     }
 
+    let newTaskId = `task-${Date.now()}`;
     const newTask: RoutineTask = {
       id: newTaskId,
       lastCompletedDate: null,
@@ -363,6 +322,8 @@ export default function App() {
   const handleUpdateTask = async (updatedTask: RoutineTask) => {
     try {
       await apiClient.updateTask(updatedTask.id, updatedTask);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API updateTask failed:", e);
     }
@@ -372,6 +333,8 @@ export default function App() {
   const handleDeleteTask = async (id: string) => {
     try {
       await apiClient.deleteTask(id);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
       console.error("API deleteTask failed:", e);
     }
@@ -385,8 +348,10 @@ export default function App() {
 
     try {
       await apiClient.completeTask(task.id);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
-      console.error("API completeTask failed:", e);
+      console.error("API completeTask failed, fallback to local:", e);
     }
 
     const updated: RoutineTask = {
@@ -403,14 +368,15 @@ export default function App() {
 
   // Handle adding weight from inside Details Dossier
   const handleAddWeightRecord = async (catId: string, weightVal: number, dateStr: string) => {
-    let recordId = `w-${Date.now()}`;
     try {
-      const backendId = await apiClient.createWeight(catId, weightVal, dateStr);
-      if (backendId) recordId = backendId;
+      await apiClient.createWeight(catId, weightVal, dateStr);
+      await syncAllFromBackend();
+      return;
     } catch (e) {
-      console.error("API createWeight failed:", e);
+      console.error("API createWeight failed, fallback to local:", e);
     }
 
+    let recordId = `w-${Date.now()}`;
     const newRecord: WeightRecord = {
       id: recordId,
       catId,

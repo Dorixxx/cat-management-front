@@ -6,7 +6,7 @@ export interface ApiConfig {
 export const getApiConfig = (): ApiConfig => {
   return {
     enableApiMode: true,
-    apiBaseUrl: 'http://aleiiicat-managementlatest.zeabur.internal',
+    apiBaseUrl: '',
   };
 };
 
